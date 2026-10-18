@@ -24,7 +24,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
-.env
+# .env is explicitly tracked as requested
 .env*.local
 smtp-credentials.csv
 
@@ -34,8 +34,8 @@ smtp-credentials.csv
 # typescript
 *.tsbuildinfo
 
-# SQLite databases
-prisma/*.db
+# SQLite databases (keep temporary journals ignored, allow local dev.db)
 prisma/*.db-journal
-*.db
 *.db-journal
+!prisma/dev.db
+
