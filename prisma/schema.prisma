@@ -1,0 +1,297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  name         String
+  role         String     @default("admin") // admin, editor, viewer
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditLogs    AuditLog[]
+}
+
+model ApplicationSettings {
+  id               String   @id @default("default")
+  smtpHost         String   @default("")
+  smtpPort         Int      @default(587)
+  smtpUsername     String   @default("")
+  smtpPassword     String   @default("")
+  smtpRegion       String   @default("us-east-1")
+  defaultFromName  String   @default("EmailHub Admin")
+  defaultFromEmail String   @default("notifications@example.com")
+  defaultReplyTo   String?
+  appBaseUrl       String   @default("http://localhost:3000")
+  maxSendRate      Int      @default(14)
+  maxSoftBounces   Int      @default(3)
+  trackOpens       Boolean  @default(true)
+  trackClicks      Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+}
+
+model Contact {
+  id                 String              @id @default(cuid())
+  email              String              @unique
+  normalizedEmail    String              @unique
+  firstName          String?
+  lastName           String?
+  fullName           String?
+  department         String?
+  organization       String?
+  jobTitle           String?
+  phone              String?
+  customAttributes   String?             // JSON string: e.g. {"designation":"Executive","dept_name":"Sales"}
+  status             String              @default("subscribed") // subscribed, unsubscribed, bounced, complained
+  validationStatus   String              @default("unknown") // valid_format, domain_valid, invalid, disposable, unknown
+  bounceCount        Int                 @default(0)
+  source             String              @default("manual") // manual, import, api
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  listMemberships    ContactListMember[]
+  tags               ContactTag[]
+  campaignRecipients CampaignRecipient[]
+  emailMessages      EmailMessage[]
+}
+
+model ContactList {
+  id           String              @id @default(cuid())
+  name         String
+  description  String?
+  contactCount Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  members      ContactListMember[]
+}
+
+model ContactListMember {
+  id        String      @id @default(cuid())
+  contactId String
+  listId    String
+  addedAt   DateTime    @default(now())
+  contact   Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  list      ContactList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, listId])
+}
+
+model Tag {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  color     String       @default("#4f46e5")
+  createdAt DateTime     @default(now())
+  contacts  ContactTag[]
+}
+
+model ContactTag {
+  id        String   @id @default(cuid())
+  contactId String
+  tagId     String
+  addedAt   DateTime @default(now())
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, tagId])
+}
+
+model SuppressionEntry {
+  id                String   @id @default(cuid())
+  email             String   @unique // lowercase normalized
+  category          String   // hard_bounce, soft_bounce, complaint, unsubscribe, admin_suppression, invalid_syntax
+  reason            String
+  providerMessageId String?
+  source            String   @default("system") // ses_webhook, smtp_response, user_unsubscribe, admin_manual, pre_send_validation
+  createdAt         DateTime @default(now())
+  createdBy         String?
+}
+
+model EmailValidationResult {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  syntaxValid  Boolean  @default(false)
+  domainExists Boolean  @default(false)
+  hasMxRecords Boolean  @default(false)
+  isDisposable Boolean  @default(false)
+  isRoleBased  Boolean  @default(false)
+  mxHost       String?
+  status       String   @default("unknown") // domain_valid, valid_format, invalid, disposable, unknown
+  details      String?
+  validatedAt  DateTime @default(now())
+}
+
+model EmailTemplate {
+  id               String     @id @default(cuid())
+  name             String
+  description      String?
+  category         String     @default("general") // newsletter, announcement, invitation, operational
+  subject          String?
+  preheader        String?
+  htmlContent      String
+  plainTextContent String?
+  thumbnailUrl     String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  campaigns        Campaign[]
+}
+
+model Campaign {
+  id                 String              @id @default(cuid())
+  name               String
+  description        String?
+  subject            String
+  preheader          String?
+  fromName           String
+  fromEmail          String
+  replyTo            String?
+  htmlContent        String
+  plainTextContent   String?
+  templateId         String?
+  status             String              @default("draft") // draft, scheduled, queued, sending, paused, completed, cancelled, failed
+  scheduledAt        DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  sendRate           Int                 @default(14)
+  trackOpens         Boolean             @default(true)
+  trackClicks        Boolean             @default(true)
+  totalRecipients    Int                 @default(0)
+  eligibleRecipients Int                 @default(0)
+  sentCount          Int                 @default(0)
+  deliveredCount     Int                 @default(0)
+  failedCount        Int                 @default(0)
+  skippedCount       Int                 @default(0)
+  bouncedCount       Int                 @default(0)
+  complaintCount     Int                 @default(0)
+  uniqueOpensCount   Int                 @default(0)
+  totalOpensCount    Int                 @default(0)
+  uniqueClicksCount  Int                 @default(0)
+  totalClicksCount   Int                 @default(0)
+  unsubscribedCount  Int                 @default(0)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  template           EmailTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  recipients         CampaignRecipient[]
+  messages           EmailMessage[]
+  events             EmailEvent[]
+  links              EmailLink[]
+}
+
+model CampaignRecipient {
+  id                String    @id @default(cuid())
+  campaignId        String
+  contactId         String?
+  email             String
+  name              String?
+  customAttributes  String?   // Snapshot JSON
+  status            String    @default("pending") // pending, processing, accepted, delivered, bounced, complained, skipped, failed
+  skipReason        String?
+  retryCount        Int       @default(0)
+  lastError         String?
+  providerMessageId String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  openedAt          DateTime?
+  clickedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  campaign          Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact           Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+}
+
+model EmailMessage {
+  id                String       @id @default(cuid())
+  campaignId        String?
+  contactId         String?
+  recipientEmail    String
+  fromEmail         String
+  subject           String
+  status            String       @default("pending") // pending, accepted, delivered, bounced, complained, failed, skipped
+  providerMessageId String?
+  trackingId        String       @unique @default(cuid())
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  openedAt          DateTime?
+  openCount         Int          @default(0)
+  clickedAt         DateTime?
+  clickCount        Int          @default(0)
+  createdAt         DateTime     @default(now())
+
+  campaign          Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  contact           Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  events            EmailEvent[]
+  links             EmailLink[]
+}
+
+model EmailLink {
+  id             String        @id @default(cuid())
+  messageId      String?
+  campaignId     String?
+  targetUrl      String
+  clickCount     Int           @default(0)
+  firstClickedAt DateTime?
+  lastClickedAt  DateTime?
+  createdAt      DateTime      @default(now())
+
+  message        EmailMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  campaign       Campaign?     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  events         EmailEvent[]
+}
+
+model EmailEvent {
+  id                String        @id @default(cuid())
+  messageId         String?
+  campaignId        String?
+  linkId            String?
+  eventType         String        // send, delivery, bounce, complaint, open, click, unsubscribe
+  providerMessageId String?
+  payload           String?       // JSON string
+  ipAddress         String?
+  userAgent         String?
+  timestamp         DateTime      @default(now())
+
+  message           EmailMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  campaign          Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  link              EmailLink?    @relation(fields: [linkId], references: [id], onDelete: SetNull)
+}
+
+model ImportJob {
+  id             String        @id @default(cuid())
+  filename       String
+  fileType       String        @default("csv") // csv, json
+  totalRows      Int           @default(0)
+  importedRows   Int           @default(0)
+  failedRows     Int           @default(0)
+  duplicateCount Int           @default(0)
+  status         String        @default("processing") // processing, completed, failed
+  createdAt      DateTime      @default(now())
+  errors         ImportError[]
+}
+
+model ImportError {
+  id          String    @id @default(cuid())
+  importJobId String
+  rowNumber   Int
+  rawRecord   String?
+  errorMessage String
+  createdAt   DateTime  @default(now())
+  importJob   ImportJob @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  action       String   // e.g. login, unsuppress, campaign_send, settings_update
+  resourceType String   // contact, campaign, suppression, settings
+  resourceId   String?
+  details      String?  // JSON string or notes
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}

@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - APP_BASE_URL=${APP_BASE_URL:-http://localhost:3000}
+      - SESSION_SECRET=${SESSION_SECRET:-change-this-in-production-session-secret}
+      - DATABASE_URL=postgresql://emailhub:secure_pg_pass@postgres:5432/emailhub_prod
+      - AWS_SES_SMTP_HOST=${AWS_SES_SMTP_HOST:-ujz58nc6cr4g.fips.yxbq.mail-manager-smtp.amazonaws.com}
+      - AWS_SES_SMTP_PORT=${AWS_SES_SMTP_PORT:-587}
+      - AWS_SES_SMTP_USERNAME=${AWS_SES_SMTP_USERNAME:-inp-awalp2xcurrgakrl2uj6mtha}
+      - AWS_SES_SMTP_PASSWORD=${AWS_SES_SMTP_PASSWORD:-Nsu01_Sm1P_2026}
+      - AWS_SES_REGION=${AWS_SES_REGION:-us-east-1}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-EmailHub Team}
+      - EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS:-notifications@example.com}
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: emailhub
+      POSTGRES_PASSWORD: secure_pg_pass
+      POSTGRES_DB: emailhub_prod
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
