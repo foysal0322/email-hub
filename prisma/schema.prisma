@@ -69,6 +69,7 @@ model ContactList {
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
   members      ContactListMember[]
+  campaigns    Campaign[]
 }
 
 model ContactListMember {
@@ -153,6 +154,7 @@ model Campaign {
   htmlContent        String
   plainTextContent   String?
   templateId         String?
+  contactListId      String?
   status             String              @default("draft") // draft, scheduled, queued, sending, paused, completed, cancelled, failed
   scheduledAt        DateTime?
   startedAt          DateTime?
@@ -177,6 +179,7 @@ model Campaign {
   updatedAt          DateTime            @updatedAt
 
   template           EmailTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  contactList        ContactList?        @relation(fields: [contactListId], references: [id], onDelete: SetNull)
   recipients         CampaignRecipient[]
   messages           EmailMessage[]
   events             EmailEvent[]

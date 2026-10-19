@@ -11,15 +11,36 @@ export async function GET(req: Request) {
     if (status) where.status = status;
     if (search) where.name = { contains: search };
 
-    const campaigns = await prisma.campaign.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      include: {
-        template: { select: { id: true, name: true } },
+    const pageParam = url.searchParams.get("page");
+    const limitParam = url.searchParams.get("limit");
+    const isPaginated = pageParam !== null || limitParam !== null;
+
+    const page = Math.max(1, parseInt(pageParam || "1", 10));
+    const limit = Math.max(1, parseInt(limitParam || "20", 10));
+    const skip = (page - 1) * limit;
+
+    const [campaigns, total] = await Promise.all([
+      prisma.campaign.findMany({
+        where,
+        skip: isPaginated ? skip : undefined,
+        take: isPaginated ? limit : undefined,
+        orderBy: { createdAt: "desc" },
+        include: {
+          template: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.campaign.count({ where }),
+    ]);
+
+    return NextResponse.json({
+      campaigns,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
       },
     });
-
-    return NextResponse.json({ campaigns });
   } catch (error: unknown) {
     console.error("Campaigns GET error:", error);
     return NextResponse.json({ error: "Failed to fetch campaigns" }, { status: 500 });
@@ -40,6 +61,7 @@ export async function POST(req: Request) {
       htmlContent,
       plainTextContent,
       templateId,
+      contactListId,
       sendRate = 14,
       trackOpens = true,
       trackClicks = true,
@@ -64,6 +86,7 @@ export async function POST(req: Request) {
         htmlContent,
         plainTextContent: plainTextContent || null,
         templateId: templateId || null,
+        contactListId: contactListId || null,
         sendRate: Number(sendRate) || 14,
         trackOpens: Boolean(trackOpens),
         trackClicks: Boolean(trackClicks),

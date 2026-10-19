@@ -93,11 +93,19 @@ export default function DashboardPage() {
   const [days, setDays] = useState(30);
 
   useEffect(() => {
-    fetchStats();
+    fetchStats(false);
   }, [days]);
 
-  async function fetchStats() {
-    setLoading(true);
+  // Auto-pulse stats and Accepted counts every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchStats(true);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [days]);
+
+  async function fetchStats(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const res = await fetch(`/api/dashboard/stats?days=${days}`);
       const data = await res.json();
@@ -105,7 +113,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("Dashboard fetch error:", err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -133,7 +141,7 @@ export default function DashboardPage() {
             <option value={90}>Last 90 Days</option>
           </select>
           <button
-            onClick={fetchStats}
+            onClick={() => fetchStats(false)}
             disabled={loading}
             className="p-2 border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
             title="Refresh Metrics"

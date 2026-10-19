@@ -81,11 +81,19 @@ async function runSuite() {
   );
   assert(
     rendered === "Hi Alice Rahman, your dept is Engineering and title is SQA Engineer.",
-    "Dynamic attribute interpolation"
+    "Dynamic attribute interpolation with 2-word name (Alice Rahman)"
   );
 
   const fallbackRendered = renderPersonalizedString("Hi {{nickname|Valued Friend}}!", { email: "test@example.com" });
   assert(fallbackRendered === "Hi Valued Friend!", "Placeholder default fallback {{key|fallback}} syntax");
+
+  // User-specified Name Rule Tests
+  assert(renderPersonalizedString("Hi {{name}}", { email: "u@e.com", name: "A.m.m. Abid Hassan" }) === "Hi Abid Hassan", "Rule 2: A.m.m. Abid Hassan -> Abid Hassan (both words)");
+  assert(renderPersonalizedString("Hi {{name}}", { email: "u@e.com", name: "A.a. Montasir" }) === "Hi Montasir", "Rule 3: A.a. Montasir -> Montasir (1 word)");
+  assert(renderPersonalizedString("Hi {{name}}", { email: "u@e.com", name: "Md. Abu Abdullah" }) === "Hi Abu Abdullah", "Rule 2: Md. Abu Abdullah -> Abu Abdullah (both words)");
+  assert(renderPersonalizedString("Hi {{name}}", { email: "u@e.com", name: "Aaban Saad Preyanta" }) === "Hi Preyanta", "Rule 4: Aaban Saad Preyanta -> Preyanta (last word)");
+  assert(renderPersonalizedString("Hi {{name}}", { email: "u@e.com", name: "Md. Abdul Kader Jilani" }) === "Hi Jilani", "Rule 4: Md. Abdul Kader Jilani -> Jilani (last word)");
+  assert(renderPersonalizedString("Hi {{name}}", { email: "u@e.com", name: "Abdullah Al Masud Fahad" }) === "Hi Fahad", "Rule 4: Abdullah Al Masud Fahad -> Fahad (last word)");
 
   // 3. Unsubscribe Token & HMAC Verification Tests
   console.log("\n--- 3. Unsubscribe HMAC Token Security ---");

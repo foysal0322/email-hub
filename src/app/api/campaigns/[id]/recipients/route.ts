@@ -24,7 +24,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       ];
     }
 
-    const [recipients, total] = await Promise.all([
+    const [recipients, total, statusGroups] = await Promise.all([
       prisma.campaignRecipient.findMany({
         where,
         skip,
@@ -32,15 +32,37 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
         orderBy: { createdAt: "asc" },
       }),
       prisma.campaignRecipient.count({ where }),
+      prisma.campaignRecipient.groupBy({
+        by: ["status"],
+        where: { campaignId: params.id },
+        _count: { status: true },
+      }),
     ]);
+
+    const statusCounts: Record<string, number> = {
+      all: 0,
+      pending: 0,
+      processing: 0,
+      accepted: 0,
+      delivered: 0,
+      skipped: 0,
+      failed: 0,
+      bounced: 0,
+    };
+
+    for (const group of statusGroups) {
+      statusCounts[group.status] = group._count.status;
+      statusCounts.all += group._count.status;
+    }
 
     return NextResponse.json({
       recipients,
+      statusCounts,
       pagination: {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.ceil(total / limit) || 1,
       },
     });
   } catch (error: unknown) {

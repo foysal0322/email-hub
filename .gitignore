@@ -34,8 +34,13 @@ smtp-credentials.csv
 # typescript
 *.tsbuildinfo
 
-# SQLite databases (keep temporary journals ignored, allow local dev.db)
+# SQLite databases (keep temporary journals/WAL files ignored, allow local dev.db)
 prisma/*.db-journal
+prisma/*.db-wal
+prisma/*.db-shm
 *.db-journal
+*.db-wal
+*.db-shm
+*.bak
 !prisma/dev.db
 

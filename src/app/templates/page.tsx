@@ -10,7 +10,9 @@ import {
   X,
   Sparkles,
   CheckCircle2,
+  RefreshCw,
 } from "lucide-react";
+import Pagination from "@/components/Pagination";
 
 interface EmailTemplate {
   id: string;
@@ -28,6 +30,11 @@ export default function TemplatesPage() {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<EmailTemplate | null>(null);
+
+  // Pagination & Filtering
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(6);
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   // Form State
   const [name, setName] = useState("");
@@ -90,6 +97,14 @@ export default function TemplatesPage() {
     }
   }
 
+  const filteredTemplates = categoryFilter
+    ? templates.filter((t) => t.category.toLowerCase() === categoryFilter.toLowerCase())
+    : templates;
+
+  const total = filteredTemplates.length;
+  const totalPages = Math.ceil(total / limit) || 1;
+  const paginatedTemplates = filteredTemplates.slice((page - 1) * limit, page * limit);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -100,13 +115,40 @@ export default function TemplatesPage() {
             Reusable responsive layouts for announcements, newsletters, transactional notifications, and marketing.
           </p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-semibold hover:bg-primary/90 shadow-sm"
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchTemplates}
+            className="p-2 border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title="Refresh Templates"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-semibold hover:bg-primary/90 shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create Template</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filter */}
+      <div className="flex items-center gap-3">
+        <select
+          value={categoryFilter}
+          onChange={(e) => {
+            setCategoryFilter(e.target.value);
+            setPage(1);
+          }}
+          className="text-xs font-semibold bg-card border border-border rounded-lg px-3 py-2 text-foreground"
         >
-          <Plus className="w-4 h-4" />
-          <span>Create Template</span>
-        </button>
+          <option value="">All Categories ({templates.length})</option>
+          <option value="newsletter">Newsletter</option>
+          <option value="transactional">Transactional</option>
+          <option value="marketing">Marketing</option>
+          <option value="announcement">Announcement</option>
+        </select>
       </div>
 
       {/* Templates Grid */}
@@ -115,12 +157,12 @@ export default function TemplatesPage() {
           <div className="col-span-full py-12 text-center text-sm text-muted-foreground">
             Loading templates...
           </div>
-        ) : templates.length === 0 ? (
+        ) : filteredTemplates.length === 0 ? (
           <div className="col-span-full py-12 text-center text-sm text-muted-foreground">
             No email templates found. Create one now.
           </div>
         ) : (
-          templates.map((tpl) => (
+          paginatedTemplates.map((tpl) => (
             <div
               key={tpl.id}
               className="bg-card border border-border rounded-xl p-5 shadow-sm hover:border-primary/50 transition-all flex flex-col justify-between"
@@ -161,6 +203,63 @@ export default function TemplatesPage() {
         )}
       </div>
 
+      {/* Pagination Controls */}
+      {total > 0 && (
+        <div className="rounded-xl overflow-hidden border border-border">
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            totalItems={total}
+            pageSize={limit}
+            onPageChange={setPage}
+            onPageSizeChange={(newSize) => {
+              setLimit(newSize);
+              setPage(1);
+            }}
+            pageSizeOptions={[3, 6, 9, 18]}
+            itemName="templates"
+          />
+        </div>
+      )}
+
+      {/* Preview Modal */}
+      {previewTemplate && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-card border border-border rounded-xl shadow-2xl max-w-3xl w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div>
+                <h3 className="text-base font-bold text-foreground">{previewTemplate.name}</h3>
+                <span className="text-xs text-muted-foreground capitalize">
+                  {previewTemplate.category} Template
+                </span>
+              </div>
+              <button
+                onClick={() => setPreviewTemplate(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-background border border-border rounded-lg p-4 max-h-[60vh] overflow-y-auto">
+              <div
+                className="prose dark:prose-invert max-w-none text-xs"
+                dangerouslySetInnerHTML={{ __html: previewTemplate.htmlContent }}
+              />
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-border">
+              <button
+                onClick={() => setPreviewTemplate(null)}
+                className="px-4 py-2 text-xs font-semibold bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/80"
+              >
+                Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Template Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -181,10 +280,11 @@ export default function TemplatesPage() {
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. VIP Member Digest"
+                    placeholder="e.g. Monthly Product Digest"
                     className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-foreground mb-1">Category</label>
                   <select
@@ -193,32 +293,32 @@ export default function TemplatesPage() {
                     className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg text-foreground"
                   >
                     <option value="newsletter">Newsletter</option>
+                    <option value="transactional">Transactional</option>
+                    <option value="marketing">Marketing</option>
                     <option value="announcement">Announcement</option>
-                    <option value="invitation">Invitation</option>
-                    <option value="operational">Operational</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Default Subject</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">Default Subject Line</label>
                 <input
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  placeholder="e.g. Updates for {{dept_name}}"
+                  placeholder="e.g. Important updates for {{name}}"
                   className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg text-foreground"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">HTML Email Content</label>
+                <label className="block text-xs font-semibold text-foreground mb-1">HTML Content Template</label>
                 <textarea
-                  rows={10}
+                  rows={8}
                   required
                   value={htmlContent}
                   onChange={(e) => setHtmlContent(e.target.value)}
-                  className="w-full p-3 font-mono text-xs bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full px-3 py-2 text-xs font-mono bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
 
@@ -238,30 +338,6 @@ export default function TemplatesPage() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Preview Modal */}
-      {previewTemplate && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-xl shadow-2xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div>
-                <h3 className="text-base font-bold text-foreground">{previewTemplate.name}</h3>
-                <p className="text-xs text-muted-foreground">{previewTemplate.subject}</p>
-              </div>
-              <button
-                onClick={() => setPreviewTemplate(null)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto border border-border rounded-lg p-4 bg-muted/10">
-              <div dangerouslySetInnerHTML={{ __html: previewTemplate.htmlContent }} />
-            </div>
           </div>
         </div>
       )}

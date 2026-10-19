@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FolderTree, Plus, Trash2, Users, ArrowRight, X } from "lucide-react";
+import { FolderTree, Plus, Trash2, Users, ArrowRight, X, RefreshCw } from "lucide-react";
+import Pagination from "@/components/Pagination";
 
 interface ContactList {
   id: string;
@@ -18,6 +19,10 @@ export default function ContactListsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(9);
 
   useEffect(() => {
     fetchLists();
@@ -64,6 +69,10 @@ export default function ContactListsPage() {
     }
   }
 
+  const total = lists.length;
+  const totalPages = Math.ceil(total / limit) || 1;
+  const paginatedLists = lists.slice((page - 1) * limit, page * limit);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -74,27 +83,36 @@ export default function ContactListsPage() {
             Segment your contacts into targetable static groups for targeted campaigns.
           </p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-semibold hover:bg-primary/90 shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create New List</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchLists}
+            className="p-2 border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title="Refresh Lists"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-semibold hover:bg-primary/90 shadow-sm"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create List</span>
+          </button>
+        </div>
       </div>
 
-      {/* Lists Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {loading ? (
-          <div className="col-span-full py-12 text-center text-sm text-muted-foreground">
+      {/* Grid of Lists */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {loading && lists.length === 0 ? (
+          <div className="col-span-full py-16 text-center text-muted-foreground text-sm">
             Loading contact lists...
           </div>
         ) : lists.length === 0 ? (
-          <div className="col-span-full py-12 text-center text-sm text-muted-foreground">
-            No contact lists defined yet.
+          <div className="col-span-full py-16 text-center text-muted-foreground text-sm">
+            No contact lists found. Click &quot;Create List&quot; to build your first segment.
           </div>
         ) : (
-          lists.map((l) => (
+          paginatedLists.map((l) => (
             <div
               key={l.id}
               className="bg-card border border-border rounded-xl p-5 shadow-sm hover:border-primary/50 transition-all flex flex-col justify-between"
@@ -137,6 +155,25 @@ export default function ContactListsPage() {
         )}
       </div>
 
+      {/* Pagination */}
+      {total > 0 && (
+        <div className="rounded-xl overflow-hidden border border-border">
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            totalItems={total}
+            pageSize={limit}
+            onPageChange={setPage}
+            onPageSizeChange={(newSize) => {
+              setLimit(newSize);
+              setPage(1);
+            }}
+            pageSizeOptions={[6, 9, 15, 30]}
+            itemName="contact lists"
+          />
+        </div>
+      )}
+
       {/* Add List Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -162,13 +199,13 @@ export default function ContactListsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1">Description</label>
-                <input
-                  type="text"
+                <label className="block text-xs font-semibold text-foreground mb-1">Description (Optional)</label>
+                <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Internal description of this audience segment"
-                  className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg text-foreground"
+                  placeholder="Describe the target demographic of this audience segment..."
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
 
@@ -184,7 +221,7 @@ export default function ContactListsPage() {
                   type="submit"
                   className="px-4 py-2 text-xs font-semibold bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
                 >
-                  Save List
+                  Create List
                 </button>
               </div>
             </form>

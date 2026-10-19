@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Users,
   Plus,
@@ -13,7 +14,9 @@ import {
   AlertCircle,
   Filter,
   X,
+  RefreshCw,
 } from "lucide-react";
+import Pagination from "@/components/Pagination";
 
 interface Contact {
   id: string;
@@ -29,13 +32,23 @@ interface Contact {
   createdAt: string;
 }
 
-export default function ContactsPage() {
+function ContactsContent() {
+  const searchParams = useSearchParams();
+  const listIdParam = searchParams.get("listId") || "";
+
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
+  const [listId, setListId] = useState(listIdParam);
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // Pagination State
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   // New Contact Form
   const [newEmail, setNewEmail] = useState("");
@@ -44,27 +57,56 @@ export default function ContactsPage() {
   const [newOrg, setNewOrg] = useState("");
   const [newTitle, setNewTitle] = useState("");
 
+  const fetchContacts = useCallback(
+    async (p = page, lim = limit) => {
+      setLoading(true);
+      try {
+        const url = new URL("/api/contacts", window.location.origin);
+        url.searchParams.set("page", String(p));
+        url.searchParams.set("limit", String(lim));
+        if (search) url.searchParams.set("search", search);
+        if (statusFilter) url.searchParams.set("status", statusFilter);
+        if (departmentFilter) url.searchParams.set("department", departmentFilter);
+        if (listId) url.searchParams.set("listId", listId);
+
+        const res = await fetch(url.toString());
+        const data = await res.json();
+        setContacts(data.contacts || []);
+        if (data.pagination) {
+          setTotal(data.pagination.total);
+          setTotalPages(data.pagination.totalPages);
+        }
+      } catch (e) {
+        console.error("fetchContacts error:", e);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [search, statusFilter, departmentFilter, listId, page, limit]
+  );
+
   useEffect(() => {
-    fetchContacts();
-  }, [statusFilter, departmentFilter]);
+    setListId(listIdParam);
+  }, [listIdParam]);
 
-  async function fetchContacts() {
-    setLoading(true);
-    try {
-      const url = new URL("/api/contacts", window.location.origin);
-      if (search) url.searchParams.set("search", search);
-      if (statusFilter) url.searchParams.set("status", statusFilter);
-      if (departmentFilter) url.searchParams.set("department", departmentFilter);
+  useEffect(() => {
+    fetchContacts(page, limit);
+  }, [page, limit, statusFilter, departmentFilter, listId]);
 
-      const res = await fetch(url.toString());
-      const data = await res.json();
-      setContacts(data.contacts || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPage(1);
+    fetchContacts(1, limit);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    setLimit(newSize);
+    setPage(1);
+  };
 
   async function handleCreateContact(e: React.FormEvent) {
     e.preventDefault();
@@ -91,7 +133,7 @@ export default function ContactsPage() {
       setNewDept("");
       setNewOrg("");
       setNewTitle("");
-      fetchContacts();
+      fetchContacts(1, limit);
     } catch (err: unknown) {
       alert((err as Error).message);
     }
@@ -101,7 +143,7 @@ export default function ContactsPage() {
     if (!confirm("Are you sure you want to delete this contact?")) return;
     try {
       await fetch(`/api/contacts?id=${id}`, { method: "DELETE" });
-      fetchContacts();
+      fetchContacts(page, limit);
     } catch (e) {
       console.error(e);
     }
@@ -118,6 +160,13 @@ export default function ContactsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => fetchContacts(page, limit)}
+            className="p-2 border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title="Refresh Directory"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
           <a
             href="/api/contacts/export"
             download
@@ -137,37 +186,61 @@ export default function ContactsPage() {
             onClick={() => setShowAddModal(true)}
             className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-semibold hover:bg-primary/90 shadow-sm transition-all"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5" />
             <span>Add Contact</span>
           </button>
         </div>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-3" />
+      <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row items-center gap-3">
+        <div className="relative flex-1 w-full">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search contacts by name, email, department, or organization..."
+            placeholder="Search by email, name, organization, department..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && fetchContacts()}
-            className="w-full pl-9 pr-3 py-2 text-sm bg-card border border-border rounded-lg text-foreground"
+            className="w-full pl-9 pr-3 py-2 text-sm bg-card border border-border rounded-lg text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="text-sm bg-card border border-border rounded-lg px-3 py-2 text-foreground"
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setPage(1);
+          }}
+          className="text-sm bg-card border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-1 focus:ring-primary w-full sm:w-auto"
         >
           <option value="">All Statuses</option>
-          <option value="subscribed">Subscribed</option>
+          <option value="active">Active</option>
           <option value="unsubscribed">Unsubscribed</option>
           <option value="bounced">Bounced</option>
           <option value="complained">Complained</option>
         </select>
-      </div>
+
+        {listId && (
+          <button
+            type="button"
+            onClick={() => {
+              setListId("");
+              setPage(1);
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20"
+          >
+            <span>Filtered by List</span>
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        <button
+          type="submit"
+          className="px-4 py-2 bg-secondary text-secondary-foreground text-xs font-semibold rounded-lg hover:bg-secondary/80 w-full sm:w-auto"
+        >
+          Search
+        </button>
+      </form>
 
       {/* Contacts Table */}
       <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
@@ -176,53 +249,52 @@ export default function ContactsPage() {
             <thead className="bg-muted/50 text-muted-foreground uppercase text-[11px] font-semibold border-b border-border">
               <tr>
                 <th className="p-4">Contact</th>
-                <th className="p-4">Department / Org</th>
-                <th className="p-4">Designation</th>
-                <th className="p-4">Subscription Status</th>
-                <th className="p-4">Validation</th>
-                <th className="p-4">Created</th>
+                <th className="p-4">Department &amp; Title</th>
+                <th className="p-4">Organization</th>
+                <th className="p-4">Status</th>
+                <th className="p-4">Deliverability Health</th>
+                <th className="p-4">Joined Date</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {loading ? (
+              {loading && contacts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                    Loading contacts...
+                  <td colSpan={7} className="p-12 text-center text-muted-foreground text-sm">
+                    Loading contacts directory...
                   </td>
                 </tr>
               ) : contacts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-12 text-center text-muted-foreground">
-                    <p className="text-base font-medium">No contacts found.</p>
-                    <p className="text-xs mt-1">Add contacts manually or import CSV/JSON files.</p>
+                  <td colSpan={7} className="p-12 text-center text-muted-foreground text-sm">
+                    No contacts found matching criteria.
                   </td>
                 </tr>
               ) : (
                 contacts.map((c) => (
                   <tr key={c.id} className="hover:bg-muted/20 transition-colors">
                     <td className="p-4">
-                      <span className="font-semibold text-foreground block">{c.fullName || "Unnamed Contact"}</span>
-                      <span className="text-xs text-muted-foreground font-mono">{c.email}</span>
+                      <div className="font-semibold text-foreground">{c.fullName || "—"}</div>
+                      <div className="text-xs text-muted-foreground">{c.email}</div>
                     </td>
 
-                    <td className="p-4 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground">{c.department || "—"}</span>
-                      {c.organization && <span className="block text-[11px]">{c.organization}</span>}
+                    <td className="p-4">
+                      <div className="text-xs font-medium text-foreground">{c.department || "—"}</div>
+                      <div className="text-[11px] text-muted-foreground">{c.jobTitle || "—"}</div>
                     </td>
 
                     <td className="p-4 text-xs text-foreground font-medium">
-                      {c.jobTitle || "—"}
+                      {c.organization || "—"}
                     </td>
 
                     <td className="p-4">
                       <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize ${
-                          c.status === "subscribed"
+                        className={`text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize ${
+                          c.status === "active"
                             ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200"
-                            : c.status === "bounced"
-                            ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200"
-                            : "bg-muted text-muted-foreground"
+                            : c.status === "unsubscribed"
+                            ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200"
+                            : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200"
                         }`}
                       >
                         {c.status}
@@ -231,11 +303,11 @@ export default function ContactsPage() {
 
                     <td className="p-4">
                       <span
-                        className={`text-[11px] px-2 py-0.5 rounded font-mono font-medium ${
-                          c.validationStatus === "domain_valid" || c.validationStatus === "valid_format"
-                            ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
-                            : c.validationStatus === "invalid"
-                            ? "bg-rose-50 text-rose-700"
+                        className={`text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize ${
+                          c.validationStatus === "valid"
+                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                            : c.validationStatus === "risky"
+                            ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                             : "bg-muted text-muted-foreground"
                         }`}
                       >
@@ -262,6 +334,18 @@ export default function ContactsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={total}
+          pageSize={limit}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+          pageSizeOptions={[25, 50, 100, 200]}
+          itemName="contacts"
+        />
       </div>
 
       {/* Add Contact Modal */}
@@ -358,5 +442,13 @@ export default function ContactsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ContactsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-muted-foreground">Loading contacts...</div>}>
+      <ContactsContent />
+    </Suspense>
   );
 }

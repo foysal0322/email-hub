@@ -13,6 +13,8 @@ import {
   Eye,
 } from "lucide-react";
 
+import Pagination from "@/components/Pagination";
+
 interface SingleMessageHistory {
   id: string;
   recipientEmail: string;
@@ -57,6 +59,8 @@ export default function SingleEmailPage() {
   } | null>(null);
 
   const [history, setHistory] = useState<SingleMessageHistory[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyLimit, setHistoryLimit] = useState(5);
 
   useEffect(() => {
     // Load contacts for recipient selection
@@ -327,32 +331,45 @@ export default function SingleEmailPage() {
                 No single email transmissions recorded yet.
               </div>
             ) : (
-              history.map((h) => (
-                <div key={h.id} className="py-3 text-xs space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-foreground truncate max-w-[160px]">{h.recipientEmail}</span>
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded font-semibold capitalize ${
-                        h.status === "accepted" || h.status === "delivered"
-                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {h.status}
-                    </span>
+              history
+                .slice((historyPage - 1) * historyLimit, historyPage * historyLimit)
+                .map((h) => (
+                  <div key={h.id} className="py-3 text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-foreground truncate max-w-[160px]">{h.recipientEmail}</span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded font-semibold capitalize ${
+                          h.status === "accepted" || h.status === "delivered"
+                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {h.status}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground truncate">{h.subject}</p>
+                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground pt-0.5">
+                      <span>{h.openedAt ? "Opened" : "Unopened"}</span>
+                      <span>&bull;</span>
+                      <span>{h.clickCount} clicks</span>
+                      <span>&bull;</span>
+                      <span>{h.sentAt ? new Date(h.sentAt).toLocaleTimeString() : "—"}</span>
+                    </div>
                   </div>
-                  <p className="text-muted-foreground truncate">{h.subject}</p>
-                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground pt-0.5">
-                    <span>{h.openedAt ? "Opened" : "Unopened"}</span>
-                    <span>&bull;</span>
-                    <span>{h.clickCount} clicks</span>
-                    <span>&bull;</span>
-                    <span>{h.sentAt ? new Date(h.sentAt).toLocaleTimeString() : "—"}</span>
-                  </div>
-                </div>
-              ))
+                ))
             )}
           </div>
+
+          {history.length > historyLimit && (
+            <Pagination
+              currentPage={historyPage}
+              totalPages={Math.ceil(history.length / historyLimit)}
+              totalItems={history.length}
+              pageSize={historyLimit}
+              onPageChange={setHistoryPage}
+              itemName="sends"
+            />
+          )}
         </div>
       </div>
     </div>

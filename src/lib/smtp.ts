@@ -27,8 +27,16 @@ export async function getActiveSmtpConfig(): Promise<SmtpConfig> {
   };
 }
 
-export function createSmtpTransporter(config: SmtpConfig) {
-  return nodemailer.createTransport({
+export interface SmtpPoolOptions {
+  pool?: boolean;
+  maxConnections?: number;
+  maxMessages?: number;
+  rateLimit?: number;
+  rateDelta?: number;
+}
+
+export function createSmtpTransporter(config: SmtpConfig, poolOptions?: SmtpPoolOptions) {
+  const transportOptions: Record<string, unknown> = {
     host: config.host,
     port: config.port,
     secure: false, // port 587 uses STARTTLS
@@ -44,7 +52,53 @@ export function createSmtpTransporter(config: SmtpConfig) {
     connectionTimeout: 15000,
     greetingTimeout: 10000,
     socketTimeout: 20000,
-  });
+  };
+
+  if (poolOptions?.pool) {
+    transportOptions.pool = true;
+    transportOptions.maxConnections = poolOptions.maxConnections ?? 5;
+    transportOptions.maxMessages = poolOptions.maxMessages ?? 100;
+    if (poolOptions.rateLimit) {
+      transportOptions.rateLimit = poolOptions.rateLimit;
+      transportOptions.rateDelta = poolOptions.rateDelta ?? 1000;
+    }
+  }
+
+  return nodemailer.createTransport(transportOptions as nodemailer.TransportOptions);
+}
+
+// Global cached connection pool for high-performance reuse
+let cachedPoolTransporter: nodemailer.Transporter | null = null;
+let cachedPoolKey = "";
+
+export function getPooledTransporter(config: SmtpConfig, maxRate = 14): nodemailer.Transporter {
+  const key = `${config.host}:${config.port}:${config.username}:${config.password}:${maxRate}`;
+  if (!cachedPoolTransporter || cachedPoolKey !== key) {
+    if (cachedPoolTransporter) {
+      try {
+        cachedPoolTransporter.close();
+      } catch {}
+    }
+    cachedPoolTransporter = createSmtpTransporter(config, {
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100,
+      rateLimit: maxRate,
+      rateDelta: 1000,
+    });
+    cachedPoolKey = key;
+  }
+  return cachedPoolTransporter;
+}
+
+export function closeSmtpPool(): void {
+  if (cachedPoolTransporter) {
+    try {
+      cachedPoolTransporter.close();
+    } catch {}
+    cachedPoolTransporter = null;
+    cachedPoolKey = "";
+  }
 }
 
 export interface SmtpDiagnosticResult {
@@ -112,9 +166,12 @@ export interface SendMailResult {
   isTransient?: boolean;
 }
 
-export async function sendMail(options: SendMailOptions): Promise<SendMailResult> {
+export async function sendMail(
+  options: SendMailOptions,
+  customTransporter?: nodemailer.Transporter
+): Promise<SendMailResult> {
   const config = await getActiveSmtpConfig();
-  const transporter = createSmtpTransporter(config);
+  const transporter = customTransporter || getPooledTransporter(config);
 
   const from = `"${options.fromName || config.fromName}" <${options.fromEmail || config.fromEmail}>`;
 

@@ -27,9 +27,14 @@ export async function prepareCampaignAudience(campaignId: string) {
 
   if (!campaign) throw new Error("Campaign not found");
 
-  // Fetch all subscribed contacts (or list members if specified)
+  // Fetch contacts for the specified contact list, or all subscribed contacts if no list selected
   const contacts = await prisma.contact.findMany({
-    where: { status: "subscribed" },
+    where: {
+      status: "subscribed",
+      ...(campaign.contactListId
+        ? { listMemberships: { some: { listId: campaign.contactListId } } }
+        : {}),
+    },
     select: {
       id: true,
       email: true,
@@ -120,9 +125,12 @@ export async function prepareCampaignAudience(campaignId: string) {
 }
 
 /**
- * Process a batch of pending campaign recipients with strict rate limiting & suppression checking
+ * Process a batch of pending campaign recipients concurrently using pooled keep-alive SMTP connections
  */
-export async function processCampaignBatch(campaignId: string, batchSize = 10): Promise<{ processed: number; finished: boolean }> {
+export async function processCampaignBatch(
+  campaignId: string,
+  customBatchSize?: number
+): Promise<{ processed: number; finished: boolean }> {
   lastWorkerPulse = new Date();
   activeCampaignId = campaignId;
 
@@ -134,6 +142,9 @@ export async function processCampaignBatch(campaignId: string, batchSize = 10): 
     activeCampaignId = null;
     return { processed: 0, finished: true };
   }
+
+  const sendRate = campaign.sendRate || 14;
+  const batchSize = customBatchSize || sendRate;
 
   // Mark campaign status as 'sending' if it was 'queued'
   if (campaign.status === "queued") {
@@ -170,168 +181,189 @@ export async function processCampaignBatch(campaignId: string, batchSize = 10): 
   const settings = await prisma.applicationSettings.findUnique({ where: { id: "default" } });
   const baseUrl = settings?.appBaseUrl || process.env.APP_BASE_URL || "http://localhost:3000";
 
-  for (const recipient of pendingRecipients) {
-    // 1. Mandatory Pre-Send Suppression Re-Check
-    const suppression = await checkSuppression(recipient.email);
-    if (suppression.isSuppressed) {
-      await prisma.campaignRecipient.update({
-        where: { id: recipient.id },
-        data: {
-          status: "skipped",
-          skipReason: `Suppressed right before send: ${suppression.category}`,
-        },
-      });
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { skippedCount: { increment: 1 } },
-      });
-      continue;
-    }
+  const batchStartTime = Date.now();
 
-    // Mark as processing
-    await prisma.campaignRecipient.update({
-      where: { id: recipient.id },
-      data: { status: "processing" },
-    });
-
-    // 2. Personalize Subject & HTML
-    const contactData = {
-      email: recipient.email,
-      name: recipient.name,
-      customAttributes: recipient.customAttributes,
-    };
-
-    const personalizedSubject = renderPersonalizedString(campaign.subject, contactData);
-    let personalizedHtml = renderPersonalizedString(campaign.htmlContent, contactData, { isHtml: true });
-
-    // Inject Preheader if provided
-    if (campaign.preheader) {
-      const preheaderHtml = `<div style="display:none;font-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">${escape(
-        campaign.preheader
-      )}</div>`;
-      personalizedHtml = preheaderHtml + personalizedHtml;
-    }
-
-    // 3. Create persistent EmailMessage record
-    const emailMessage = await prisma.emailMessage.create({
-      data: {
-        campaignId,
-        contactId: recipient.contactId,
-        recipientEmail: recipient.email,
-        fromEmail: campaign.fromEmail,
-        subject: personalizedSubject,
-        status: "pending",
-      },
-    });
-
-    // 4. Inject Tracking Pixel and Tracked Links
-    const { html: finalHtml, headers } = await prepareTrackedEmailContent({
-      html: personalizedHtml,
-      messageId: emailMessage.id,
-      trackingId: emailMessage.trackingId,
-      campaignId,
-      recipientEmail: recipient.email,
-      baseUrl,
-      enableOpenTracking: campaign.trackOpens,
-      enableClickTracking: campaign.trackClicks,
-    });
-
-    // 5. Transmit via AWS SES SMTP
-    const sendResult = await sendMail({
-      to: recipient.email,
-      subject: personalizedSubject,
-      html: finalHtml,
-      text: campaign.plainTextContent ? renderPersonalizedString(campaign.plainTextContent, contactData) : undefined,
-      fromName: campaign.fromName,
-      fromEmail: campaign.fromEmail,
-      replyTo: campaign.replyTo || undefined,
-      headers,
-    });
-
-    // 6. Handle Outcomes
-    if (sendResult.success) {
-      await prisma.campaignRecipient.update({
-        where: { id: recipient.id },
-        data: {
-          status: "accepted",
-          providerMessageId: sendResult.messageId || null,
-          sentAt: new Date(),
-        },
-      });
-
-      await prisma.emailMessage.update({
-        where: { id: emailMessage.id },
-        data: {
-          status: "accepted",
-          providerMessageId: sendResult.messageId || null,
-          sentAt: new Date(),
-        },
-      });
-
-      // Record send event
-      await prisma.emailEvent.create({
-        data: {
-          messageId: emailMessage.id,
-          campaignId,
-          eventType: "send",
-          providerMessageId: sendResult.messageId || null,
-          payload: JSON.stringify({ response: sendResult.response }),
-        },
-      });
-
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { sentCount: { increment: 1 } },
-      });
-    } else {
-      // Failed send
-      if (sendResult.isTransient && recipient.retryCount < 3) {
-        // Transient error -> retry
+  // Process all recipients in this batch concurrently across the connection pool
+  const results = await Promise.allSettled(
+    pendingRecipients.map(async (recipient) => {
+      // 1. Mandatory Pre-Send Suppression Re-Check
+      const suppression = await checkSuppression(recipient.email);
+      if (suppression.isSuppressed) {
         await prisma.campaignRecipient.update({
           where: { id: recipient.id },
           data: {
-            status: "pending",
-            retryCount: { increment: 1 },
-            lastError: sendResult.error,
+            status: "skipped",
+            skipReason: `Suppressed right before send: ${suppression.category}`,
           },
         });
-      } else {
-        // Permanent failure
+        return { type: "skipped" };
+      }
+
+      // Mark as processing
+      await prisma.campaignRecipient.update({
+        where: { id: recipient.id },
+        data: { status: "processing" },
+      });
+
+      // 2. Personalize Subject & HTML
+      const contactData = {
+        email: recipient.email,
+        name: recipient.name,
+        customAttributes: recipient.customAttributes,
+      };
+
+      const personalizedSubject = renderPersonalizedString(campaign.subject, contactData);
+      let personalizedHtml = renderPersonalizedString(campaign.htmlContent, contactData, { isHtml: true });
+
+      // Inject Preheader if provided
+      if (campaign.preheader) {
+        const preheaderHtml = `<div style="display:none;font-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">${escape(
+          campaign.preheader
+        )}</div>`;
+        personalizedHtml = preheaderHtml + personalizedHtml;
+      }
+
+      // 3. Create persistent EmailMessage record
+      const emailMessage = await prisma.emailMessage.create({
+        data: {
+          campaignId,
+          contactId: recipient.contactId,
+          recipientEmail: recipient.email,
+          fromEmail: campaign.fromEmail,
+          subject: personalizedSubject,
+          status: "pending",
+        },
+      });
+
+      // 4. Inject Tracking Pixel and Tracked Links
+      const { html: finalHtml, headers } = await prepareTrackedEmailContent({
+        html: personalizedHtml,
+        messageId: emailMessage.id,
+        trackingId: emailMessage.trackingId,
+        campaignId,
+        recipientEmail: recipient.email,
+        baseUrl,
+        enableOpenTracking: campaign.trackOpens,
+        enableClickTracking: campaign.trackClicks,
+      });
+
+      // 5. Transmit via AWS SES SMTP (utilizes connection pool)
+      const sendResult = await sendMail({
+        to: recipient.email,
+        subject: personalizedSubject,
+        html: finalHtml,
+        text: campaign.plainTextContent ? renderPersonalizedString(campaign.plainTextContent, contactData) : undefined,
+        fromName: campaign.fromName,
+        fromEmail: campaign.fromEmail,
+        replyTo: campaign.replyTo || undefined,
+        headers,
+      });
+
+      // 6. Handle Outcomes
+      if (sendResult.success) {
         await prisma.campaignRecipient.update({
           where: { id: recipient.id },
           data: {
-            status: "failed",
-            lastError: sendResult.error,
+            status: "accepted",
+            providerMessageId: sendResult.messageId || null,
+            sentAt: new Date(),
           },
         });
 
         await prisma.emailMessage.update({
           where: { id: emailMessage.id },
           data: {
-            status: "failed",
+            status: "accepted",
+            providerMessageId: sendResult.messageId || null,
+            sentAt: new Date(),
           },
         });
 
-        await prisma.campaign.update({
-          where: { id: campaignId },
-          data: { failedCount: { increment: 1 } },
+        // Record send event
+        await prisma.emailEvent.create({
+          data: {
+            messageId: emailMessage.id,
+            campaignId,
+            eventType: "send",
+            providerMessageId: sendResult.messageId || null,
+            payload: JSON.stringify({ response: sendResult.response }),
+          },
         });
 
-        // Automatically suppress if 5xx hard bounce
-        if (!sendResult.isTransient) {
-          await suppressEmail({
-            email: recipient.email,
-            category: "hard_bounce",
-            reason: `Immediate SMTP Permanent Error: ${sendResult.error}`,
-            source: "smtp_response",
+        return { type: "sent" };
+      } else {
+        // Failed send
+        if (sendResult.isTransient && recipient.retryCount < 3) {
+          await prisma.campaignRecipient.update({
+            where: { id: recipient.id },
+            data: {
+              status: "pending",
+              retryCount: { increment: 1 },
+              lastError: sendResult.error,
+            },
           });
+          return { type: "retry" };
+        } else {
+          await prisma.campaignRecipient.update({
+            where: { id: recipient.id },
+            data: {
+              status: "failed",
+              lastError: sendResult.error,
+            },
+          });
+
+          await prisma.emailMessage.update({
+            where: { id: emailMessage.id },
+            data: {
+              status: "failed",
+            },
+          });
+
+          if (!sendResult.isTransient) {
+            await suppressEmail({
+              email: recipient.email,
+              category: "hard_bounce",
+              reason: `Immediate SMTP Permanent Error: ${sendResult.error}`,
+              source: "smtp_response",
+            });
+          }
+
+          return { type: "failed" };
         }
       }
-    }
+    })
+  );
 
-    // Rate-limiting delay (e.g. 1000ms / 14 ~ 70ms between dispatches)
-    const delayMs = Math.max(20, Math.floor(1000 / (campaign.sendRate || 14)));
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  // Aggregate batch statistics and update Campaign counts atomically
+  let sentIncrement = 0;
+  let failedIncrement = 0;
+  let skippedIncrement = 0;
+
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      if (r.value.type === "sent") sentIncrement++;
+      else if (r.value.type === "failed") failedIncrement++;
+      else if (r.value.type === "skipped") skippedIncrement++;
+    }
+  }
+
+  const campaignUpdates: Record<string, unknown> = {};
+  if (sentIncrement > 0) campaignUpdates.sentCount = { increment: sentIncrement };
+  if (failedIncrement > 0) campaignUpdates.failedCount = { increment: failedIncrement };
+  if (skippedIncrement > 0) campaignUpdates.skippedCount = { increment: skippedIncrement };
+
+  if (Object.keys(campaignUpdates).length > 0) {
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: campaignUpdates,
+    });
+  }
+
+  // Smooth rate-pacing: Ensure batch does not exceed target rate per second
+  const elapsedMs = Date.now() - batchStartTime;
+  const targetBatchTimeMs = 1000;
+  if (elapsedMs < targetBatchTimeMs && pendingRecipients.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, targetBatchTimeMs - elapsedMs));
   }
 
   return { processed: pendingRecipients.length, finished: false };
@@ -347,11 +379,11 @@ export async function runCampaignWorker(campaignId: string) {
   try {
     let finished = false;
     while (!finished) {
-      const res = await processCampaignBatch(campaignId, 10);
+      const res = await processCampaignBatch(campaignId);
       finished = res.finished;
       if (res.processed === 0 && !res.finished) {
-        // Wait a second before re-checking
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // Wait briefly before re-checking
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
   } finally {

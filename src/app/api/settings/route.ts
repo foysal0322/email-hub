@@ -69,6 +69,9 @@ export async function POST(req: Request) {
       update: updateData,
     });
 
+    const { closeSmtpPool } = await import("@/lib/smtp");
+    closeSmtpPool();
+
     return NextResponse.json({ success: true, settings: { ...updated, smtpPassword: "••••••••" } });
   } catch (error: unknown) {
     console.error("Settings POST error:", error);

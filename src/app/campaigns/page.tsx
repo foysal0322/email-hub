@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
   Send,
@@ -16,7 +16,9 @@ import {
   CheckCircle2,
   Clock,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
+import Pagination from "@/components/Pagination";
 
 interface CampaignItem {
   id: string;
@@ -38,29 +40,76 @@ interface CampaignItem {
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
+  // Pagination State
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
+  const pageRef = useRef(page);
+  const limitRef = useRef(limit);
+  const searchRef = useRef(search);
+  const statusRef = useRef(statusFilter);
+
   useEffect(() => {
-    fetchCampaigns();
+    pageRef.current = page;
+  }, [page]);
+  useEffect(() => {
+    limitRef.current = limit;
+  }, [limit]);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+  useEffect(() => {
+    statusRef.current = statusFilter;
   }, [statusFilter]);
 
-  async function fetchCampaigns() {
-    setLoading(true);
-    try {
-      const url = new URL("/api/campaigns", window.location.origin);
-      if (statusFilter) url.searchParams.set("status", statusFilter);
-      if (search) url.searchParams.set("search", search);
+  const fetchCampaigns = useCallback(
+    async (p = pageRef.current, lim = limitRef.current, silent = false) => {
+      if (!silent) setRefreshing(true);
+      try {
+        const url = new URL("/api/campaigns", window.location.origin);
+        url.searchParams.set("page", String(p));
+        url.searchParams.set("limit", String(lim));
+        if (statusRef.current) url.searchParams.set("status", statusRef.current);
+        if (searchRef.current) url.searchParams.set("search", searchRef.current);
 
-      const res = await fetch(url.toString());
-      const data = await res.json();
-      setCampaigns(data.campaigns || []);
-    } catch (err) {
-      console.error("Fetch campaigns error:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
+        const res = await fetch(url.toString());
+        if (!res.ok) return;
+        const data = await res.json();
+        setCampaigns(data.campaigns || []);
+        if (data.pagination) {
+          setTotal(data.pagination.total);
+          setTotalPages(data.pagination.totalPages);
+        }
+      } catch (err) {
+        console.error("Fetch campaigns error:", err);
+      } finally {
+        if (!silent) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    fetchCampaigns(1, limit);
+  }, [statusFilter, limit, fetchCampaigns]);
+
+  // Auto-pulse SENT counts and statuses every 2 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchCampaigns(pageRef.current, limitRef.current, true);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [fetchCampaigns]);
 
   async function handleStart(id: string) {
     if (!confirm("Start sending this campaign to its audience?")) return;
@@ -68,7 +117,7 @@ export default function CampaignsPage() {
       const res = await fetch(`/api/campaigns/${id}/start`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) alert(data.error || "Failed to start campaign");
-      fetchCampaigns();
+      fetchCampaigns(page, limit);
     } catch (e) {
       alert("Error starting campaign");
     }
@@ -77,7 +126,7 @@ export default function CampaignsPage() {
   async function handlePause(id: string) {
     try {
       await fetch(`/api/campaigns/${id}/pause`, { method: "POST" });
-      fetchCampaigns();
+      fetchCampaigns(page, limit);
     } catch (e) {
       console.error(e);
     }
@@ -86,7 +135,7 @@ export default function CampaignsPage() {
   async function handleResume(id: string) {
     try {
       await fetch(`/api/campaigns/${id}/resume`, { method: "POST" });
-      fetchCampaigns();
+      fetchCampaigns(page, limit);
     } catch (e) {
       console.error(e);
     }
@@ -96,48 +145,101 @@ export default function CampaignsPage() {
     if (!confirm("Are you sure you want to delete this campaign? This cannot be undone.")) return;
     try {
       await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
-      fetchCampaigns();
+      fetchCampaigns(page, limit);
     } catch (e) {
       console.error(e);
     }
   }
+
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+    fetchCampaigns(newPage, limit);
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    setLimit(newSize);
+    setPage(1);
+    fetchCampaigns(1, newSize);
+  };
+
+  const hasActiveCampaign = campaigns.some(
+    (c) => c.status === "sending" || c.status === "queued"
+  );
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Email Campaigns</h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Email Campaigns</h1>
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
+                hasActiveCampaign
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                  : "bg-muted/60 text-muted-foreground border-border"
+              }`}
+              title="Automatically polling progress counts every 2 seconds"
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  hasActiveCampaign ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/60"
+                }`}
+              />
+              Auto-updating (2s)
+            </span>
+          </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Manage, schedule, and inspect multi-recipient campaigns with automated delivery protection.
+            Dispatch high-volume broadcast emails across your audience segments via AWS SES SMTP.
           </p>
         </div>
-        <Link
-          href="/campaigns/new"
-          className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-sm font-semibold hover:bg-primary/90 shadow-sm transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create Campaign</span>
-        </Link>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => fetchCampaigns(page, limit)}
+            disabled={refreshing}
+            className="p-2 border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title="Refresh List"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin text-primary" : ""}`} />
+          </button>
+
+          <Link
+            href="/campaigns/create"
+            className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 rounded-lg text-xs font-semibold hover:bg-primary/90 shadow-sm"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create Campaign</span>
+          </Link>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-3" />
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="relative w-full sm:w-80">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search campaigns by name or subject..."
+            placeholder="Search campaigns by name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && fetchCampaigns()}
-            className="w-full pl-9 pr-3 py-2 text-sm bg-card border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setPage(1);
+                fetchCampaigns(1, limit);
+              }
+            }}
+            className="w-full pl-9 pr-3 py-2 text-sm bg-card border border-border rounded-lg text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />
         </div>
+
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="text-sm bg-card border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setPage(1);
+          }}
+          className="text-sm bg-card border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-1 focus:ring-primary w-full sm:w-auto"
         >
           <option value="">All Statuses</option>
           <option value="draft">Draft</option>
@@ -156,45 +258,34 @@ export default function CampaignsPage() {
               <tr>
                 <th className="p-4">Campaign Name</th>
                 <th className="p-4">Status</th>
-                <th className="p-4">Recipients</th>
-                <th className="p-4">Delivery Rate</th>
-                <th className="p-4">Engagement</th>
-                <th className="p-4">Created</th>
+                <th className="p-4">Sent Accepted Progress</th>
+                <th className="p-4">Engagement (Opens/Clicks)</th>
+                <th className="p-4">Created Date</th>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {loading ? (
+              {loading && campaigns.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="p-12 text-center text-muted-foreground text-sm">
                     Loading campaigns...
                   </td>
                 </tr>
               ) : campaigns.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-12 text-center text-muted-foreground">
-                    <p className="text-base font-medium">No campaigns found.</p>
-                    <p className="text-xs mt-1">Get started by building your first automated email campaign.</p>
-                    <Link
-                      href="/campaigns/new"
-                      className="mt-4 inline-flex items-center gap-1.5 text-xs text-primary font-semibold hover:underline"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Create New Campaign
-                    </Link>
+                  <td colSpan={6} className="p-12 text-center text-muted-foreground text-sm">
+                    No campaigns found. Click &quot;Create Campaign&quot; to begin.
                   </td>
                 </tr>
               ) : (
                 campaigns.map((camp) => {
                   const deliveryRate =
-                    camp.sentCount > 0 ? ((camp.deliveredCount || camp.sentCount) / camp.sentCount) * 100 : 0;
-                  const openRate =
-                    camp.sentCount > 0 ? (camp.uniqueOpensCount / camp.sentCount) * 100 : 0;
-                  const clickRate =
-                    camp.sentCount > 0 ? (camp.uniqueClicksCount / camp.sentCount) * 100 : 0;
+                    camp.totalRecipients > 0 ? (camp.sentCount / camp.totalRecipients) * 100 : 0;
+                  const openRate = camp.sentCount > 0 ? (camp.uniqueOpensCount / camp.sentCount) * 100 : 0;
+                  const clickRate = camp.sentCount > 0 ? (camp.uniqueClicksCount / camp.sentCount) * 100 : 0;
 
                   return (
-                    <tr key={camp.id} className="hover:bg-muted/30 transition-colors">
+                    <tr key={camp.id} className="hover:bg-muted/20 transition-colors">
                       <td className="p-4">
                         <Link
                           href={`/campaigns/${camp.id}`}
@@ -202,52 +293,43 @@ export default function CampaignsPage() {
                         >
                           {camp.name}
                         </Link>
-                        <span className="text-xs text-muted-foreground block truncate max-w-xs">
+                        <span className="text-xs text-muted-foreground line-clamp-1">
                           {camp.subject}
                         </span>
                       </td>
 
                       <td className="p-4">
                         <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          className={`text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize inline-flex items-center gap-1.5 ${
                             camp.status === "completed"
-                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200"
                               : camp.status === "sending"
-                              ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+                              ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200"
                               : camp.status === "paused"
-                              ? "bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
-                              : "bg-muted text-muted-foreground border border-border"
+                              ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border border-blue-200"
+                              : "bg-muted text-muted-foreground"
                           }`}
                         >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              camp.status === "sending"
-                                ? "bg-amber-500 animate-ping"
-                                : camp.status === "completed"
-                                ? "bg-emerald-500"
-                                : "bg-slate-400"
-                            }`}
-                          />
-                          <span className="capitalize">{camp.status}</span>
+                          {camp.status === "sending" && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          )}
+                          {camp.status}
                         </span>
                       </td>
 
-                      <td className="p-4">
-                        <span className="font-semibold text-foreground">{camp.sentCount}</span>
-                        <span className="text-muted-foreground text-xs"> / {camp.totalRecipients}</span>
-                        {camp.skippedCount > 0 && (
-                          <span className="block text-[11px] text-rose-500">
-                            {camp.skippedCount} suppressed
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{deliveryRate.toFixed(1)}%</span>
-                          <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                      <td className="p-4 min-w-[200px]">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                              {camp.sentCount.toLocaleString()}
+                            </span>
+                            <span className="text-muted-foreground text-[11px]">
+                              of {camp.totalRecipients.toLocaleString()} ({Math.round(deliveryRate)}%)
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-emerald-500"
+                              className="h-full bg-emerald-500 transition-all duration-300"
                               style={{ width: `${Math.min(100, deliveryRate)}%` }}
                             />
                           </div>
@@ -256,12 +338,16 @@ export default function CampaignsPage() {
 
                       <td className="p-4">
                         <div className="text-xs">
-                          <span className="font-semibold text-foreground">{camp.uniqueOpensCount}</span>
+                          <span className="font-semibold text-foreground">
+                            {camp.uniqueOpensCount.toLocaleString()}
+                          </span>
                           <span className="text-muted-foreground"> ({openRate.toFixed(1)}% opens)</span>
                         </div>
                         <div className="text-[11px] text-muted-foreground">
-                          <span className="font-semibold text-foreground">{camp.uniqueClicksCount}</span> clicks (
-                          {clickRate.toFixed(1)}%)
+                          <span className="font-semibold text-foreground">
+                            {camp.uniqueClicksCount.toLocaleString()}
+                          </span>{" "}
+                          clicks ({clickRate.toFixed(1)}%)
                         </div>
                       </td>
 
@@ -325,6 +411,18 @@ export default function CampaignsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          totalItems={total}
+          pageSize={limit}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+          pageSizeOptions={[5, 10, 20, 50]}
+          itemName="campaigns"
+        />
       </div>
     </div>
   );

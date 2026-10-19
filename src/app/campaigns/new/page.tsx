@@ -102,18 +102,28 @@ export default function NewCampaignWizard() {
         }
       });
 
-    // Fetch contacts count for audience preview
-    fetch("/api/contacts?limit=100")
+    // Audience preview initialized
+  }, []);
+
+  useEffect(() => {
+    // Dynamic audience estimate when selected list changes
+    const url = new URL("/api/contacts", window.location.origin);
+    url.searchParams.set("limit", "1");
+    if (selectedListId) {
+      url.searchParams.set("listId", selectedListId);
+    }
+    fetch(url.toString())
       .then((r) => r.json())
       .then((data) => {
         const total = data.pagination?.total || 0;
         setAudienceSummary({
           total,
-          eligible: Math.max(0, total - 1),
-          suppressed: 1, // sample suppression
+          eligible: total,
+          suppressed: 0,
         });
-      });
-  }, []);
+      })
+      .catch(() => {});
+  }, [selectedListId]);
 
   function handleSelectTemplate(tpl: TemplateItem) {
     if (tpl.subject) setSubject(tpl.subject);
@@ -127,7 +137,7 @@ export default function NewCampaignWizard() {
   async function handleCreateCampaign(autoStart = false) {
     setSubmitting(true);
     try {
-      // 1. Create campaign
+      // 1. Create campaign with target contactListId
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -141,6 +151,7 @@ export default function NewCampaignWizard() {
           replyTo,
           htmlContent,
           plainTextContent,
+          contactListId: selectedListId || null,
           sendRate,
           trackOpens,
           trackClicks,
