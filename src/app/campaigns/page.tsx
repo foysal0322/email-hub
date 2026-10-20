@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Send,
   Plus,
@@ -38,9 +39,11 @@ interface CampaignItem {
 }
 
 export default function CampaignsPage() {
+  const router = useRouter();
   const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [relaunchingId, setRelaunchingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
@@ -148,6 +151,35 @@ export default function CampaignsPage() {
       fetchCampaigns(page, limit);
     } catch (e) {
       console.error(e);
+    }
+  }
+
+  async function handleRelaunch(id: string, name: string) {
+    if (
+      !confirm(
+        `Re-launch "${name}"?\n\nThis will clone the campaign into a new instance, refresh the audience, and start sending immediately.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setRelaunchingId(id);
+      const res = await fetch(`/api/campaigns/${id}/relaunch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoStart: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to re-launch campaign");
+        setRelaunchingId(null);
+        return;
+      }
+      router.push(`/campaigns/${data.campaign.id}`);
+    } catch {
+      alert("Error re-launching campaign");
+      setRelaunchingId(null);
     }
   }
 
@@ -384,6 +416,17 @@ export default function CampaignsPage() {
                               title="Resume Sending"
                             >
                               <Play className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          {(camp.status === "completed" || camp.status === "cancelled" || camp.status === "failed") && (
+                            <button
+                              onClick={() => handleRelaunch(camp.id, camp.name)}
+                              disabled={relaunchingId === camp.id}
+                              className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600 hover:bg-indigo-500 hover:text-white transition-all disabled:opacity-50"
+                              title="Re-launch Campaign"
+                            >
+                              <RotateCcw className={`w-4 h-4 ${relaunchingId === camp.id ? "animate-spin" : ""}`} />
                             </button>
                           )}
 

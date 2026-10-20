@@ -20,35 +20,88 @@ export function getWorkerStatus() {
 /**
  * Freeze audience snapshot into CampaignRecipient table and transition to queued
  */
-export async function prepareCampaignAudience(campaignId: string) {
+export async function prepareCampaignAudience(
+  campaignId: string,
+  options?: { sourceCampaignId?: string }
+) {
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
   });
 
   if (!campaign) throw new Error("Campaign not found");
 
-  // Fetch contacts for the specified contact list, or all subscribed contacts if no list selected
-  const contacts = await prisma.contact.findMany({
-    where: {
-      status: "subscribed",
-      ...(campaign.contactListId
-        ? { listMemberships: { some: { listId: campaign.contactListId } } }
-        : {}),
-    },
-    select: {
-      id: true,
-      email: true,
-      normalizedEmail: true,
-      fullName: true,
-      firstName: true,
-      lastName: true,
-      department: true,
-      organization: true,
-      jobTitle: true,
-      phone: true,
-      customAttributes: true,
-    },
-  });
+  // Fetch contacts: from assigned contact list, or source campaign recipients, or all subscribed contacts
+  let contacts;
+  if (campaign.contactListId) {
+    contacts = await prisma.contact.findMany({
+      where: {
+        status: "subscribed",
+        listMemberships: { some: { listId: campaign.contactListId } },
+      },
+      select: {
+        id: true,
+        email: true,
+        normalizedEmail: true,
+        fullName: true,
+        firstName: true,
+        lastName: true,
+        department: true,
+        organization: true,
+        jobTitle: true,
+        phone: true,
+        customAttributes: true,
+      },
+    });
+  } else if (options?.sourceCampaignId) {
+    const sourceRecipients = await prisma.campaignRecipient.findMany({
+      where: { campaignId: options.sourceCampaignId },
+      select: { contactId: true, email: true },
+    });
+    const contactIds = sourceRecipients.map((r) => r.contactId).filter(Boolean) as string[];
+    const emails = sourceRecipients.map((r) => r.email.toLowerCase().trim());
+
+    contacts = await prisma.contact.findMany({
+      where: {
+        status: "subscribed",
+        OR: [
+          { id: { in: contactIds } },
+          { normalizedEmail: { in: emails } },
+        ],
+      },
+      select: {
+        id: true,
+        email: true,
+        normalizedEmail: true,
+        fullName: true,
+        firstName: true,
+        lastName: true,
+        department: true,
+        organization: true,
+        jobTitle: true,
+        phone: true,
+        customAttributes: true,
+      },
+    });
+  } else {
+    contacts = await prisma.contact.findMany({
+      where: {
+        status: "subscribed",
+      },
+      select: {
+        id: true,
+        email: true,
+        normalizedEmail: true,
+        fullName: true,
+        firstName: true,
+        lastName: true,
+        department: true,
+        organization: true,
+        jobTitle: true,
+        phone: true,
+        customAttributes: true,
+      },
+    });
+  }
 
   // Deduplicate and filter out already suppressed contacts
   const seenEmails = new Set<string>();

@@ -76,6 +76,7 @@ export default function CampaignInspectPage() {
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isRelaunching, setIsRelaunching] = useState(false);
   const [recipientSearch, setRecipientSearch] = useState("");
   const [recipientFilter, setRecipientFilter] = useState("");
   const [activeTab, setActiveTab] = useState<"recipients" | "preview">("recipients");
@@ -213,6 +214,37 @@ export default function CampaignInspectPage() {
     }
   }
 
+  async function handleRelaunch() {
+    if (!campaign) return;
+    if (
+      !confirm(
+        `Re-launch "${campaign.name}"?\n\nThis will clone this campaign into a new instance, refresh the audience from the list, and start sending immediately.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setIsRelaunching(true);
+      const res = await fetch(`/api/campaigns/${id}/relaunch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoStart: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to re-launch campaign");
+        setIsRelaunching(false);
+        return;
+      }
+      router.push(`/campaigns/${data.campaign.id}`);
+    } catch (e) {
+      console.error(e);
+      alert("Error re-launching campaign");
+      setIsRelaunching(false);
+    }
+  }
+
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
     fetchRecipients(newPage, limit);
@@ -339,6 +371,18 @@ export default function CampaignInspectPage() {
             >
               <Play className="w-3.5 h-3.5" />
               <span>Resume Sending</span>
+            </button>
+          )}
+
+          {(campaign.status === "completed" || campaign.status === "cancelled" || campaign.status === "failed") && (
+            <button
+              onClick={handleRelaunch}
+              disabled={isRelaunching}
+              className="inline-flex items-center gap-1.5 bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-semibold hover:bg-indigo-700 shadow-sm transition-all disabled:opacity-50"
+              title="Duplicate campaign into a new instance and start sending immediately"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${isRelaunching ? "animate-spin" : ""}`} />
+              <span>{isRelaunching ? "Re-launching..." : "Re-launch Campaign"}</span>
             </button>
           )}
         </div>
