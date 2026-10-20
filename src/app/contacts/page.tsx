@@ -365,10 +365,10 @@ function ContactsContent() {
             </button>
             <button
               onClick={openBulkDeleteModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-sm transition-all"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-sm transition-all"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete Permanently ({selectedIds.length})</span>
+              <span>Delete ({selectedIds.length})</span>
             </button>
           </div>
         </div>
@@ -454,7 +454,9 @@ function ContactsContent() {
                 <th className="p-4">Status</th>
                 <th className="p-4">Deliverability Health</th>
                 <th className="p-4">Joined Date</th>
-                <th className="p-4 text-right">Admin Actions</th>
+                <th className="p-4 text-center sticky right-0 bg-muted/95 backdrop-blur-xs z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] min-w-[100px]">
+                  Delete
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -484,7 +486,7 @@ function ContactsContent() {
                   return (
                     <tr
                       key={c.id}
-                      className={`transition-colors ${
+                      className={`group transition-colors ${
                         isSelected
                           ? "bg-rose-50/40 dark:bg-rose-950/20 hover:bg-rose-50/60 dark:hover:bg-rose-950/30"
                           : "hover:bg-muted/20"
@@ -562,15 +564,22 @@ function ContactsContent() {
                         {new Date(c.createdAt).toLocaleDateString()}
                       </td>
 
-                      {/* Action buttons */}
-                      <td className="p-4 text-right">
+                      {/* Action buttons - Sticky right so it's always visible */}
+                      <td
+                        className={`p-4 text-center sticky right-0 z-10 shadow-[-4px_0_6px_-2px_rgba(0,0,0,0.06)] min-w-[100px] ${
+                          isSelected
+                            ? "bg-rose-50 dark:bg-rose-950"
+                            : "bg-card group-hover:bg-muted/30"
+                        }`}
+                      >
                         <button
+                          type="button"
                           onClick={() => openSingleDeleteModal(c)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70 border border-rose-200 dark:border-rose-900/60 transition-all shadow-xs"
-                          title="Permanently Delete Student from System"
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-700 active:scale-95 shadow-sm shadow-red-600/20 transition-all cursor-pointer"
+                          title="Delete Student"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          <span>Delete Permanently</span>
+                          <span>Delete</span>
                         </button>
                       </td>
                     </tr>
@@ -716,20 +725,6 @@ function ContactsContent() {
                   />
                 </div>
               )}
-
-              {/* Type confirmation */}
-              <div className="pt-2 border-t border-border">
-                <label className="block text-xs text-foreground mb-1">
-                  Type <span className="font-mono font-bold text-rose-600">DELETE</span> to confirm permanent erasure:
-                </label>
-                <input
-                  type="text"
-                  placeholder="DELETE"
-                  value={confirmationInput}
-                  onChange={(e) => setConfirmationInput(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-mono bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-1 focus:ring-rose-500"
-                />
-              </div>
             </div>
 
             {/* Modal Actions */}
@@ -738,29 +733,25 @@ function ContactsContent() {
                 type="button"
                 onClick={() => setDeleteModalOpen(false)}
                 disabled={isDeleting}
-                className="px-4 py-2 text-xs font-semibold border border-border rounded-xl hover:bg-muted text-foreground transition-colors"
+                className="px-4 py-2 text-xs font-semibold border border-border rounded-xl hover:bg-muted text-foreground transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleConfirmDelete}
-                disabled={confirmationInput.trim() !== "DELETE" || isDeleting}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400 text-white rounded-xl shadow-md shadow-rose-600/20 disabled:shadow-none disabled:cursor-not-allowed transition-all"
+                disabled={isDeleting}
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white rounded-xl shadow-md shadow-red-600/25 active:scale-95 transition-all cursor-pointer"
               >
                 {isDeleting ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Erasing permanently...</span>
+                    <span>Deleting...</span>
                   </>
                 ) : (
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>
-                      {isBulkDelete
-                        ? `Permanently Erase ${selectedIds.length} Students`
-                        : "Permanently Erase Student"}
-                    </span>
+                    <span>Delete</span>
                   </>
                 )}
               </button>
